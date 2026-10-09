@@ -1,0 +1,8 @@
+/target/
+/music/
+/hyperjam.keys
+/hyperjam.keys.tmp
+*.ojn
+*.ojm
+*.omc
+*.m30

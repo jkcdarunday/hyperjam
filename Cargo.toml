@@ -1,0 +1,14 @@
+[package]
+name = "hyperjam"
+version = "0.1.0"
+edition = "2024"
+description = "A native seven-key OJN/OJM rhythm gameplay player"
+license = "MIT"
+
+[dependencies]
+macroquad = { version = "0.4.14", default-features = false }
+rodio = { version = "0.21.1", default-features = false, features = ["playback", "wav", "vorbis", "mp3", "flac"] }
+encoding_rs = "0.8"
+
+[profile.release]
+lto = "thin"
