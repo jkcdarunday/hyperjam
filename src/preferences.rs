@@ -1,11 +1,14 @@
+use crate::library::{LibrarySort, SortColumn};
 use crate::speed::ScrollSpeed;
 use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Preferences {
+    pub music: PathBuf,
+    pub library_sort: LibrarySort,
     pub speed: ScrollSpeed,
     pub offset: f64,
     pub volume: f32,
@@ -17,6 +20,8 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
+            music: PathBuf::from("music"),
+            library_sort: LibrarySort::default(),
             speed: ScrollSpeed::default(),
             offset: 0.0,
             volume: 0.7,
@@ -95,6 +100,12 @@ impl Preferences {
                     .parse()
                     .map(|v| prefs.fullscreen = v)
                     .map_err(|_| "expected true or false".into()),
+                "library_sort" => SortColumn::parse(value).map(|v| prefs.library_sort.column = v),
+                "library_descending" => value
+                    .parse()
+                    .map(|v| prefs.library_sort.descending = v)
+                    .map_err(|_| "expected true or false".into()),
+                "music_folder" => decode_folder(value).map(|v| prefs.music = v),
                 _ => Ok(()), // Allow newer versions to add preferences.
             };
             if let Err(error) = result {
@@ -104,7 +115,7 @@ impl Preferences {
         (prefs, warnings)
     }
 
-    pub fn save(self, path: &Path) -> Result<(), String> {
+    pub fn save(&self, path: &Path) -> Result<(), String> {
         if self.difficulty > 2
             || !self.offset.is_finite()
             || self.offset.abs() > 0.5
@@ -114,13 +125,16 @@ impl Preferences {
             return Err("Invalid preference value".into());
         }
         let text = format!(
-            "# Hyperjam preferences\nspeed={}\noffset_ms={}\nvolume_percent={}\ndifficulty={}\nautoplay={}\nfullscreen={}\n",
+            "# Hyperjam preferences\nspeed={}\noffset_ms={}\nvolume_percent={}\ndifficulty={}\nautoplay={}\nfullscreen={}\nlibrary_sort={}\nlibrary_descending={}\nmusic_folder={}\n",
             self.speed.multiplier(),
             self.offset * 1000.0,
             self.volume * 100.0,
             ["easy", "normal", "hard"][self.difficulty],
             self.autoplay,
-            self.fullscreen
+            self.fullscreen,
+            self.library_sort.column.name(),
+            self.library_sort.descending,
+            encode_folder(&self.music)?
         );
         let temp = path.with_extension("settings.tmp");
         let write = (|| {
@@ -131,6 +145,42 @@ impl Preferences {
         })();
         write.map_err(|error| format!("Could not save {}: {error}", path.display()))
     }
+}
+
+fn encode_folder(path: &Path) -> Result<String, String> {
+    let path = path
+        .to_str()
+        .ok_or("Folder path must be valid UTF-8 to save preferences")?;
+    Ok(path
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || b"/\\:._-=".contains(&byte) {
+                (byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect())
+}
+fn decode_folder(value: &str) -> Result<PathBuf, String> {
+    let mut bytes = vec![];
+    let mut rest = value.as_bytes();
+    while let Some(&byte) = rest.first() {
+        if byte == b'%' {
+            let pair = rest.get(1..3).ok_or("Invalid folder escape")?;
+            let pair = std::str::from_utf8(pair).map_err(|_| "Invalid folder escape")?;
+            bytes.push(u8::from_str_radix(pair, 16).map_err(|_| "Invalid folder escape")?);
+            rest = &rest[3..];
+        } else {
+            bytes.push(byte);
+            rest = &rest[1..];
+        }
+    }
+    let path = String::from_utf8(bytes).map_err(|_| "Invalid folder encoding")?;
+    if path.is_empty() || path.contains('\0') {
+        return Err("Invalid folder path".into());
+    }
+    Ok(PathBuf::from(path))
 }
 
 fn parse_number(value: &str, min: f64, max: f64) -> Result<f64, String> {
@@ -155,14 +205,14 @@ impl PreferenceStore {
     pub fn new(path: PathBuf, saved: Preferences) -> Self {
         Self {
             path,
-            saved,
+            saved: saved.clone(),
             observed: saved,
             changed_at: None,
         }
     }
-    pub fn update(&mut self, current: Preferences, now: f64) -> Result<bool, String> {
-        if current != self.observed {
-            self.observed = current;
+    pub fn update(&mut self, current: &Preferences, now: f64) -> Result<bool, String> {
+        if *current != self.observed {
+            self.observed = current.clone();
             self.changed_at = Some(now);
         }
         if self.observed == self.saved {
@@ -175,8 +225,8 @@ impl PreferenceStore {
         }
         Ok(false)
     }
-    pub fn flush(&mut self, current: Preferences) -> Result<(), String> {
-        self.observed = current;
+    pub fn flush(&mut self, current: &Preferences) -> Result<(), String> {
+        self.observed = current.clone();
         self.changed_at = None;
         if self.observed != self.saved {
             self.write()?;
@@ -185,7 +235,7 @@ impl PreferenceStore {
     }
     fn write(&mut self) -> Result<(), String> {
         self.observed.save(&self.path)?;
-        self.saved = self.observed;
+        self.saved = self.observed.clone();
         Ok(())
     }
 }
@@ -203,6 +253,11 @@ mod tests {
     fn saved_values_round_trip() {
         let path = path("roundtrip.settings");
         let prefs = Preferences {
+            music: PathBuf::from("music collection/歌曲 % = #\n"),
+            library_sort: LibrarySort {
+                column: SortColumn::Hard,
+                descending: true,
+            },
             speed: ScrollSpeed::parse("8").unwrap(),
             offset: -0.025,
             volume: 0.35,
@@ -239,20 +294,20 @@ mod tests {
     fn changes_debounce_and_flush_keeps_last_adjustment() {
         let path = path("debounce.settings");
         let defaults = Preferences::default();
-        let mut store = PreferenceStore::new(path.clone(), defaults);
-        let mut current = defaults;
+        let mut store = PreferenceStore::new(path.clone(), defaults.clone());
+        let mut current = defaults.clone();
         current.speed = current.speed.next();
-        store.update(current, 0.0).unwrap();
+        store.update(&current, 0.0).unwrap();
         assert!(!path.exists());
         current.speed = current.speed.next();
-        store.update(current, 0.2).unwrap();
-        store.update(current, 0.4).unwrap();
+        store.update(&current, 0.2).unwrap();
+        store.update(&current, 0.4).unwrap();
         assert!(!path.exists());
-        store.update(current, 0.6).unwrap();
+        store.update(&current, 0.6).unwrap();
         assert_eq!(Preferences::load(&path).0, current);
         current.offset = 0.01;
-        store.update(current, 0.7).unwrap();
-        store.flush(current).unwrap();
+        store.update(&current, 0.7).unwrap();
+        store.flush(&current).unwrap();
         assert_eq!(Preferences::load(&path).0, current);
         std::fs::remove_file(path).unwrap();
     }
@@ -266,9 +321,9 @@ mod tests {
             autoplay: true,
             ..Preferences::default()
         };
-        store.update(prefs, 0.0).unwrap();
-        assert!(store.update(prefs, 0.4).is_err());
-        assert!(store.update(prefs, 0.5).is_ok());
-        assert!(store.flush(prefs).is_err());
+        store.update(&prefs, 0.0).unwrap();
+        assert!(store.update(&prefs, 0.4).is_err());
+        assert!(store.update(&prefs, 0.5).is_ok());
+        assert!(store.flush(&prefs).is_err());
     }
 }

@@ -2,8 +2,9 @@ use hyperjam::{
     audio::{Audio, Bank, LoadedSong, load_song, practice_bank},
     bindings::Bindings,
     chart::{Song, practice_song},
+    folders::{FolderBrowser, readable_folder},
     gameplay::{Gameplay, Judgment, NoteState},
-    library::{self, Library},
+    library::{self, Library, LibrarySort, SortColumn},
     preferences::{PreferenceStore, Preferences},
     speed::ScrollSpeed,
 };
@@ -47,6 +48,7 @@ struct Options {
     saved_preferences: Preferences,
     preference_warnings: Vec<String>,
     fullscreen: bool,
+    library_sort: LibrarySort,
     music: PathBuf,
     bindings_path: PathBuf,
     keys: Option<Bindings>,
@@ -85,10 +87,11 @@ fn options_from(arguments: Vec<String>) -> Result<Options, String> {
     let (saved_preferences, preference_warnings) = Preferences::load(&settings_path);
     let mut o = Options {
         settings_path,
-        saved_preferences,
+        saved_preferences: saved_preferences.clone(),
         preference_warnings,
         fullscreen: saved_preferences.fullscreen,
-        music: "music".into(),
+        library_sort: saved_preferences.library_sort,
+        music: saved_preferences.music.clone(),
         bindings_path: "hyperjam.keys".into(),
         keys: None,
         list_music: false,
@@ -114,7 +117,7 @@ fn options_from(arguments: Vec<String>) -> Result<Options, String> {
         match arg.as_str() {
             "--help" | "-h" => {
                 println!(
-                    "Hyperjam - native 7-key OJN/OJM gameplay\n\nUsage: hyperjam [chart.ojn] [--samples bank.ojm] [--difficulty easy|normal|hard]\n                [--autoplay] [--start] [--offset milliseconds] [--speed preset]\n                [--volume 0..100] [--inspect] [--font font.ttf]\n                [--music folder] [--keys \"S D F SPACE J K L\"]\n                [--bindings hyperjam.keys] [--settings hyperjam.settings]\n                [--fullscreen|--windowed] [--no-autoplay]\n                [--list-music] [--validate-music]\n\nWithout a chart, the music picker opens when charts exist in ./music.\nDefaults: S D F Space J K L / Enter start / Esc pause / R retry / O open\n          F8 music / F9 keys / F1,F2 scroll / Tab autoplay / +,- offset / F11 fullscreen\nR/O shortcuts are disabled when those letters are assigned to a lane."
+                    "Hyperjam - native 7-key OJN/OJM gameplay\n\nUsage: hyperjam [chart.ojn] [--samples bank.ojm] [--difficulty easy|normal|hard]\n                [--autoplay] [--start] [--offset milliseconds] [--speed preset]\n                [--volume 0..100] [--inspect] [--font font.ttf]\n                [--music folder] [--keys \"S D F SPACE J K L\"]\n                [--bindings hyperjam.keys] [--settings hyperjam.settings]\n                [--fullscreen|--windowed] [--no-autoplay]\n                [--sort title|artist|id|bpm|easy|normal|hard] [--descending]\n                [--list-music] [--validate-music]\n\nWithout a chart, the music picker opens when charts exist in ./music.\nDefaults: S D F Space J K L / Enter start / Esc pause / R retry / O open\n          F8 music / F9 keys / F1,F2 scroll / Tab autoplay / +,- offset / F11 fullscreen\nR/O shortcuts are disabled when those letters are assigned to a lane."
                 );
                 std::process::exit(0);
             }
@@ -125,6 +128,12 @@ fn options_from(arguments: Vec<String>) -> Result<Options, String> {
                     .ok_or("--settings needs a configuration path")?
                     .into()
             }
+            "--sort" => {
+                o.library_sort.column =
+                    SortColumn::parse(&args.next().ok_or("--sort needs a column")?)?
+            }
+            "--descending" => o.library_sort.descending = true,
+            "--ascending" => o.library_sort.descending = false,
             "--music" => o.music = args.next().ok_or("--music needs a folder")?.into(),
             "--bindings" => {
                 o.bindings_path = args
@@ -228,7 +237,9 @@ struct App {
     bindings_path: PathBuf,
     key_editor: Option<menus::KeyEditor>,
     speed_menu: bool,
+    folder_browser: Option<FolderBrowser>,
     library: Library,
+    library_sort: LibrarySort,
     library_loader: Option<Receiver<Result<Library, String>>>,
     music: PathBuf,
     library_open: bool,
@@ -286,13 +297,18 @@ impl App {
             },
         };
         let mut app = Self {
-            preference_store: PreferenceStore::new(o.settings_path.clone(), o.saved_preferences),
+            preference_store: PreferenceStore::new(
+                o.settings_path.clone(),
+                o.saved_preferences.clone(),
+            ),
             preferences_error: None,
             bindings,
             bindings_path: o.bindings_path.clone(),
             key_editor: None,
             speed_menu: false,
+            folder_browser: None,
             library: Library::default(),
+            library_sort: o.library_sort,
             library_loader: None,
             music: o.music.clone(),
             library_open: o.chart.is_none() && !o.start,
@@ -324,6 +340,8 @@ impl App {
     }
     fn preferences(&self) -> Preferences {
         Preferences {
+            music: self.music.clone(),
+            library_sort: self.library_sort,
             speed: self.speed,
             offset: self.offset,
             volume: self.volume,
@@ -334,7 +352,7 @@ impl App {
     }
     fn save_preferences(&mut self) {
         let current = self.preferences();
-        match self.preference_store.update(current, get_time()) {
+        match self.preference_store.update(&current, get_time()) {
             Ok(true) => self.preferences_error = None,
             Ok(false) => {}
             Err(error) => {
@@ -348,6 +366,7 @@ impl App {
             || self.key_editor.is_some()
             || self.library_open
             || self.speed_menu
+            || self.folder_browser.is_some()
     }
     fn scan_music(&mut self) {
         let (tx, rx) = mpsc::channel();
@@ -362,6 +381,32 @@ impl App {
             self.pause();
         }
         self.library_open = true;
+        self.library_selected = 0;
+    }
+    fn open_folder_browser(&mut self) {
+        if self.mode == Mode::Playing {
+            self.pause();
+        }
+        self.folder_browser = Some(FolderBrowser::new(&self.music));
+    }
+    fn set_music_folder(&mut self, path: PathBuf) -> Result<(), String> {
+        let folder = readable_folder(&path)?;
+        if self.mode == Mode::Playing {
+            self.pause();
+        }
+        self.music = folder;
+        self.library_query.clear();
+        self.library_selected = 0;
+        self.library = Library::default();
+        self.folder_browser = None;
+        self.library_open = true;
+        self.error = None;
+        self.scan_music();
+        Ok(())
+    }
+    fn sort_library(&mut self, column: SortColumn) {
+        self.library_sort = self.library_sort.choose(column);
+        self.library.sort(self.library_sort);
         self.library_selected = 0;
     }
     fn open_keys(&mut self) {
@@ -508,10 +553,8 @@ impl App {
                 Ok(result) => {
                     self.library_loader = None;
                     match result {
-                        Ok(library) => {
-                            if library.entries.is_empty() {
-                                self.library_open = false;
-                            }
+                        Ok(mut library) => {
+                            library.sort(self.library_sort);
                             for warning in &library.warnings {
                                 eprintln!("Library: {warning}");
                             }
@@ -534,6 +577,12 @@ impl App {
         let files = get_dropped_files();
         let dropped: Vec<_> = files.into_iter().filter_map(|f| f.path).collect();
         if !dropped.is_empty() {
+            if let Some(folder) = dropped.iter().find(|p| p.is_dir()) {
+                if let Err(error) = self.set_music_folder(folder.clone()) {
+                    self.error = Some(error);
+                }
+                return;
+            }
             self.samples = dropped
                 .iter()
                 .find(|p| {
@@ -558,6 +607,10 @@ impl App {
                 self.error =
                     Some("Drop an OJN chart together with its OJM/OMC/M30 sample bank.".into());
             }
+        }
+        if self.folder_browser.is_some() {
+            menus::folder_input(self);
+            return;
         }
         if self.key_editor.is_some() {
             menus::keys_input(self);
@@ -1378,13 +1431,14 @@ fn main() {
         }
     };
     if o.list_music || o.validate_music {
-        let library = match library::scan(&o.music) {
+        let mut library = match library::scan(&o.music) {
             Ok(library) => library,
             Err(e) => {
                 eprintln!("{e}");
                 std::process::exit(1);
             }
         };
+        library.sort(o.library_sort);
         let mut failures = library.warnings.len();
         for warning in library.warnings {
             eprintln!("{warning}");
@@ -1392,8 +1446,9 @@ fn main() {
         for entry in &library.entries {
             if o.list_music {
                 println!(
-                    "{} | {} | {:.0} BPM | {:?} | {}",
+                    "{} | ID {} | {} | {:.0} BPM | {:?} | {}",
                     entry.header.title,
+                    entry.header.id,
                     entry.header.artist,
                     entry.header.bpm,
                     entry.header.levels,
@@ -1540,7 +1595,7 @@ async fn run(o: Options) {
         next_frame().await;
     }
     let current = app.preferences();
-    if let Err(error) = app.preference_store.flush(current) {
+    if let Err(error) = app.preference_store.flush(&current) {
         eprintln!("{error}");
     }
 }
@@ -1554,6 +1609,11 @@ mod preference_tests {
             std::process::id()
         ));
         let prefs = Preferences {
+            music: PathBuf::from("remembered music collection"),
+            library_sort: LibrarySort {
+                column: SortColumn::Hard,
+                descending: true,
+            },
             speed: ScrollSpeed::parse("6").unwrap(),
             offset: 0.045,
             volume: 0.4,
@@ -1578,6 +1638,8 @@ mod preference_tests {
         assert_eq!(options.difficulty, prefs.difficulty);
         assert!(options.autoplay);
         assert!(options.fullscreen);
+        assert_eq!(options.library_sort, prefs.library_sort);
+        assert_eq!(options.music, prefs.music);
         std::fs::remove_file(path).unwrap();
     }
     #[test]
@@ -1594,6 +1656,8 @@ mod preference_tests {
             "easy",
             "--no-autoplay",
             "--windowed",
+            "--music",
+            "another folder",
             "--settings",
             path.to_str().unwrap(),
         ];
@@ -1604,6 +1668,7 @@ mod preference_tests {
         assert_eq!(options.difficulty, 0);
         assert!(!options.autoplay);
         assert!(!options.fullscreen);
+        assert_eq!(options.music, PathBuf::from("another folder"));
         assert_eq!(Preferences::load(&path).0, prefs); // Parsing alone never writes a file.
         std::fs::remove_file(path).unwrap();
     }

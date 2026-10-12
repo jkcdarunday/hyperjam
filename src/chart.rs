@@ -49,6 +49,7 @@ struct RawEvent {
 
 #[derive(Clone, Debug)]
 pub struct SongHeader {
+    pub id: u32,
     pub title: String,
     pub artist: String,
     pub noter: String,
@@ -63,7 +64,7 @@ pub fn parse_header(data: &[u8]) -> Result<SongHeader, String> {
         return Err("OJN header is shorter than 300 bytes".into());
     }
     let mut r = Reader::new(data);
-    r.bytes(4)?;
+    let id = r.u32()?;
     if r.bytes(4)? != b"ojn\0" {
         return Err("Invalid OJN signature".into());
     }
@@ -75,6 +76,7 @@ pub fn parse_header(data: &[u8]) -> Result<SongHeader, String> {
     let levels = [r.u16()?, r.u16()?, r.u16()?];
     r.pos = 108;
     Ok(SongHeader {
+        id,
         title: r.text(64)?,
         artist: r.text(32)?,
         noter: r.text(32)?,
@@ -86,6 +88,7 @@ pub fn parse_header(data: &[u8]) -> Result<SongHeader, String> {
 
 pub fn parse_ojn(data: &[u8]) -> Result<Song, String> {
     let SongHeader {
+        id: _,
         title,
         artist,
         noter,

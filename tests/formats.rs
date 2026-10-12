@@ -197,17 +197,24 @@ fn practice_autoplay_achieves_a_full_combo_on_all_difficulties() {
 fn library_indexes_subfolders_and_searches_metadata_and_filenames() {
     let dir = std::env::temp_dir().join(format!("hyperjam-library-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("sub")).unwrap();
-    std::fs::write(dir.join("one.ojn"), ojn_fixture()).unwrap();
-    std::fs::write(dir.join("sub/two.OJN"), ojn_fixture()).unwrap();
+    let mut first = ojn_fixture();
+    put_u32(&mut first, 0, 42);
+    let mut second = ojn_fixture();
+    put_u32(&mut second, 0, 100);
+    std::fs::write(dir.join("one.ojn"), first).unwrap();
+    std::fs::write(dir.join("sub/two.OJN"), second).unwrap();
     std::fs::write(dir.join("bad.ojn"), b"invalid").unwrap();
     std::fs::write(dir.join("bank.ojm"), ojm_fixture()).unwrap();
     let library = hyperjam::library::scan(&dir).unwrap();
     assert_eq!(library.entries.len(), 2);
     assert_eq!(library.warnings.len(), 1);
     assert_eq!(library.filter("TESTERS").len(), 2);
+    assert_eq!(library.filter("fIxTuRe").len(), 2);
+    assert_eq!(library.filter("42").len(), 1);
     assert_eq!(library.filter("two.ojn").len(), 1);
     assert!(library.filter("missing").is_empty());
     assert_eq!(library.entries[0].header.levels, [3, 4, 5]);
+    assert_eq!(library.entries[0].header.id, 42);
     std::fs::remove_dir_all(dir).unwrap();
 }
 

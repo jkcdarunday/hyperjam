@@ -16,7 +16,19 @@ cargo run --release -- /path/to/song.ojn --difficulty hard --samples /path/to/so
 
 Keep the sample bank named in the OJN header beside the chart; filenames are matched without case sensitivity. You can also drag an OJN and its OJM/OMC/M30 bank into the window together, or press **O** and paste an OJN path. A missing sample bank produces a warning and allows silent play. Sample decode failures are reported in the terminal.
 
-Charts in `./music` are indexed automatically, including subfolders. Launching without a chart opens the music picker. Type a title, artist, or filename to search, use **Up/Down**, the mouse wheel, or page buttons to browse, then press **Enter** or click **Load chart**. **F8** reopens the picker and **F5** rescans the folder. The **Practice** button loads the built-in song. Use `--music /another/folder` to choose a different collection. Indexing reads only chart headers; audio is decoded when you load a chart.
+Charts in your selected music folder (initially `./music`) are indexed automatically, including subfolders. Launching without a chart opens the music picker. Type a title, artist, or filename to search, use **Up/Down**, the mouse wheel, or page buttons to browse, then press **Enter** or click **Load chart**. **F8** reopens the picker and **F5** rescans the folder. The **Practice** button loads the built-in song. Use `--music /another/folder` to choose a different collection. Indexing reads only chart headers; audio is decoded when you load a chart.
+
+To select a folder in the app, press **F8** and click **Folder…**. Browse subfolders, use **Parent** or **Home**, or replace the path with **Ctrl+A / Ctrl+V**. **Enter** opens the selected subfolder or entered path; **Load folder** or **Ctrl+Enter** loads the path. **Cancel / Esc** keeps the previous collection. You can also drag a folder onto the player. Loading resets the name filter and rescans recursively, retaining your sort order. The chosen folder is saved in `hyperjam.settings` and restored on the next launch; `--music` overrides it. Empty folders remain selectable, and unreadable subfolders are skipped with warnings.
+
+The OJN contains song metadata, its ID, the Easy/Normal/Hard charts, tempo events, and note references. The OJM is its keysound bank, containing audio samples. Each OJN gets one row in the music table; its referenced sample bank is resolved when you load that row. OJM files alone do not appear as playable charts.
+
+Click **Name**, **Artist**, **ID**, **BPM**, **Easy**, **Normal**, or **Hard** to sort the table. Click the same header again for descending order. Difficulty columns sort by their numeric chart levels; ID comes from the OJN header and sorts numerically. Your sort column and direction are saved in `hyperjam.settings`. The search box filters by name, artist, filename, or ID without changing the sort. Filtering is case-insensitive; **Ctrl+V** pastes text, and **Ctrl+Backspace** or **X** clears the filter.
+
+```sh
+cargo run --release -- --music /path/to/music --sort hard
+```
+
+CLI sorting accepts `--sort title|artist|id|bpm|easy|normal|hard` and `--ascending` / `--descending`. It also applies to `--list-music` output.
 
 On Linux, building needs `pkg-config`, ALSA development headers, and an X11/OpenGL runtime. For Debian/Ubuntu:
 

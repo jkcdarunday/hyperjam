@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod bindings;
 pub mod chart;
+pub mod folders;
 pub mod gameplay;
 pub mod library;
 pub mod ojm;
