@@ -10,5 +10,8 @@ macroquad = { version = "0.4.14", default-features = false }
 rodio = { version = "0.21.1", default-features = false, features = ["playback", "wav", "vorbis", "mp3", "flac"] }
 encoding_rs = "0.8"
 
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+rfd = { version = "0.17.2", default-features = false }
+
 [profile.release]
 lto = "thin"

@@ -5,6 +5,7 @@ use hyperjam::{
     folders::{FolderBrowser, readable_folder},
     gameplay::{Gameplay, Judgment, NoteState},
     library::{self, Library, LibrarySort, SortColumn},
+    native_folders::{FolderResult, NativeFolderPicker},
     preferences::{PreferenceStore, Preferences},
     speed::ScrollSpeed,
 };
@@ -238,6 +239,7 @@ struct App {
     key_editor: Option<menus::KeyEditor>,
     speed_menu: bool,
     folder_browser: Option<FolderBrowser>,
+    native_folder_picker: Option<NativeFolderPicker>,
     library: Library,
     library_sort: LibrarySort,
     library_loader: Option<Receiver<Result<Library, String>>>,
@@ -307,6 +309,7 @@ impl App {
             key_editor: None,
             speed_menu: false,
             folder_browser: None,
+            native_folder_picker: None,
             library: Library::default(),
             library_sort: o.library_sort,
             library_loader: None,
@@ -367,6 +370,7 @@ impl App {
             || self.library_open
             || self.speed_menu
             || self.folder_browser.is_some()
+            || self.native_folder_picker.is_some()
     }
     fn scan_music(&mut self) {
         let (tx, rx) = mpsc::channel();
@@ -388,6 +392,19 @@ impl App {
             self.pause();
         }
         self.folder_browser = Some(FolderBrowser::new(&self.music));
+    }
+    fn open_system_folder_picker(&mut self) {
+        if self.mode == Mode::Playing {
+            self.pause();
+        }
+        match NativeFolderPicker::open(&self.music) {
+            Ok(picker) => self.native_folder_picker = Some(picker),
+            Err(error) => {
+                eprintln!("{error}");
+                self.open_folder_browser();
+                self.folder_browser.as_mut().unwrap().error = Some(error);
+            }
+        }
     }
     fn set_music_folder(&mut self, path: PathBuf) -> Result<(), String> {
         let folder = readable_folder(&path)?;
@@ -547,6 +564,27 @@ impl App {
         }
     }
     fn input(&mut self) {
+        if let Some(picker) = &mut self.native_folder_picker {
+            if let Some(result) = picker.poll() {
+                self.native_folder_picker = None;
+                match result {
+                    FolderResult::Selected(folder) => {
+                        if let Err(error) = self.set_music_folder(folder) {
+                            self.open_folder_browser();
+                            self.folder_browser.as_mut().unwrap().error = Some(error);
+                        }
+                    }
+                    FolderResult::Cancelled => {}
+                    FolderResult::Unavailable(error) => {
+                        eprintln!("{error}");
+                        self.open_folder_browser();
+                        self.folder_browser.as_mut().unwrap().error = Some(error);
+                    }
+                }
+            }
+            while get_char_pressed().is_some() {}
+            return;
+        }
         self.poll_load();
         if let Some(rx) = &self.library_loader {
             match rx.try_recv() {
@@ -1595,6 +1633,7 @@ async fn run(o: Options) {
         next_frame().await;
     }
     let current = app.preferences();
+    app.native_folder_picker = None;
     if let Err(error) = app.preference_store.flush(&current) {
         eprintln!("{error}");
     }

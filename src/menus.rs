@@ -424,16 +424,32 @@ fn draw_library(app: &mut App, ui: &Ui, meta: &Ui) {
         495.0,
         MUTED,
     );
-    if ui.button("FOLDER...", 852.0, 123.0, 122.0, 34.0, false)
-        && app.key_editor.is_none()
+    if ui.button(
+        if app.native_folder_picker.is_some() {
+            "OPENING..."
+        } else {
+            "FOLDER..."
+        },
+        852.0,
+        123.0,
+        122.0,
+        34.0,
+        false,
+    ) && app.key_editor.is_none()
         && app.folder_browser.is_none()
+        && app.native_folder_picker.is_none()
     {
-        app.open_folder_browser();
+        if is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift) {
+            app.open_folder_browser();
+        } else {
+            app.open_system_folder_picker();
+        }
     }
     let mut close = false;
     if ui.button("CLOSE", 989.0, 123.0, 96.0, 34.0, false)
         && app.key_editor.is_none()
         && app.folder_browser.is_none()
+        && app.native_folder_picker.is_none()
     {
         close = true;
     }
@@ -458,6 +474,7 @@ fn draw_library(app: &mut App, ui: &Ui, meta: &Ui) {
         && ui.button("X", 1045.0, 182.0, 35.0, 31.0, false)
         && app.key_editor.is_none()
         && app.folder_browser.is_none()
+        && app.native_folder_picker.is_none()
     {
         app.library_query.clear();
         app.library_selected = 0;
@@ -476,6 +493,7 @@ fn draw_library(app: &mut App, ui: &Ui, meta: &Ui) {
             && is_mouse_button_pressed(MouseButton::Left)
             && app.key_editor.is_none()
             && app.folder_browser.is_none()
+            && app.native_folder_picker.is_none()
         {
             app.sort_library(column);
         }
@@ -571,6 +589,7 @@ fn draw_library(app: &mut App, ui: &Ui, meta: &Ui) {
             && is_mouse_button_pressed(MouseButton::Left)
             && app.key_editor.is_none()
             && app.folder_browser.is_none()
+            && app.native_folder_picker.is_none()
         {
             app.library_selected = selection;
         }
@@ -595,24 +614,28 @@ fn draw_library(app: &mut App, ui: &Ui, meta: &Ui) {
     if ui.button("<", 853.0, 612.0, 50.0, 30.0, false)
         && app.key_editor.is_none()
         && app.folder_browser.is_none()
+        && app.native_folder_picker.is_none()
     {
         app.library_selected = app.library_selected.saturating_sub(8);
     }
     if ui.button(">", 914.0, 612.0, 50.0, 30.0, false)
         && app.key_editor.is_none()
         && app.folder_browser.is_none()
+        && app.native_folder_picker.is_none()
     {
         app.library_selected = (app.library_selected + 8).min(filtered.len().saturating_sub(1));
     }
     if ui.button("RESCAN", 975.0, 612.0, 110.0, 30.0, false)
         && app.key_editor.is_none()
         && app.folder_browser.is_none()
+        && app.native_folder_picker.is_none()
     {
         app.scan_music();
     }
     if ui.button("PRACTICE", 195.0, 662.0, 160.0, 37.0, false)
         && app.key_editor.is_none()
         && app.folder_browser.is_none()
+        && app.native_folder_picker.is_none()
     {
         app.ready();
         app.song = practice_song();
@@ -635,6 +658,7 @@ fn draw_library(app: &mut App, ui: &Ui, meta: &Ui) {
     if ui.button("LOAD CHART", 899.0, 662.0, 186.0, 37.0, true)
         && app.key_editor.is_none()
         && app.folder_browser.is_none()
+        && app.native_folder_picker.is_none()
     {
         load = true;
     }

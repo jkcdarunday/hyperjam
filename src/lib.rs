@@ -4,6 +4,7 @@ pub mod chart;
 pub mod folders;
 pub mod gameplay;
 pub mod library;
+pub mod native_folders;
 pub mod ojm;
 pub mod preferences;
 mod reader;
