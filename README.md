@@ -2,7 +2,7 @@
 
 ![Created with AI assistance](https://img.shields.io/badge/Created_with-AI_assistance-8A2BE2)
 
-A native Rust seven-key rhythm gameplay player, inspired by O2Mania. This is a focused local player: load a chart, play its keysounds, and finish a session. It includes an original synthesized practice song, so no game assets are needed to try it.
+A native Rust seven-key rhythm gameplay player. This is a focused local player: load a chart, play its keysounds, and finish a session. It includes an original synthesized practice song, so no game assets are needed to try it.
 
 This project was created with AI assistance from OpenAI Codex.
 
@@ -16,7 +16,7 @@ cargo run --release -- /path/to/song.ojn --difficulty hard --samples /path/to/so
 
 Keep the sample bank named in the OJN header beside the chart; filenames are matched without case sensitivity. You can also drag an OJN and its OJM/OMC/M30 bank into the window together, or press **O** and paste an OJN path. A missing sample bank produces a warning and allows silent play. Sample decode failures are reported in the terminal.
 
-Charts in `./music` are indexed automatically, including subfolders. Launching without a chart opens the music picker. Type a title, artist, or filename to search, use **Up/Down**, the mouse wheel, or page buttons to browse, then press **Enter** or click **Load chart**. **F1** reopens the picker and **F5** rescans the folder. The **Practice** button loads the built-in song. Use `--music /another/folder` to choose a different collection. Indexing reads only chart headers; audio is decoded when you load a chart.
+Charts in `./music` are indexed automatically, including subfolders. Launching without a chart opens the music picker. Type a title, artist, or filename to search, use **Up/Down**, the mouse wheel, or page buttons to browse, then press **Enter** or click **Load chart**. **F8** reopens the picker and **F5** rescans the folder. The **Practice** button loads the built-in song. Use `--music /another/folder` to choose a different collection. Indexing reads only chart headers; audio is decoded when you load a chart.
 
 On Linux, building needs `pkg-config`, ALSA development headers, and an X11/OpenGL runtime. For Debian/Ubuntu:
 
@@ -35,17 +35,22 @@ The application uses Macroquad for rendering and Rodio for audio. Dependencies a
 | **Esc** | Pause / resume |
 | **R** | Restart with a two-second countdown |
 | **O** | Open a chart by path |
-| **F1** | Music picker |
-| **F2** | Configure lane keys |
+| **F1 / F2** | Previous / next note-speed preset |
+| **F8** | Music picker |
+| **F9** | Configure lane keys |
 | **F3 / F4** | Open a chart / restart, regardless of lane bindings |
 | **Tab** | Toggle autoplay before starting |
-| **Up / Down** | Scroll speed, 0.5–3.0x |
+| **Up / Down** | Next / previous speed preset (outside the music picker) |
 | **+ / -** | Timing offset, 10 ms steps |
 | **F11** | Fullscreen |
 
 Difficulty, autoplay, scroll speed, and volume can also be changed with the mouse. Positive timing offset delays the note highway and judgment clock relative to the audio; use it to compensate for output latency. The displayed offset is in milliseconds.
 
-Press **F2** or click **Keys** to remap each lane. Click a lane and press its new key; assigning a key already used by another lane swaps the two lanes. **Save keys** writes the bindings to `hyperjam.keys` in the current directory, and the next launch restores them. **Defaults** restores S D F Space J K L in the editor; **Cancel** discards changes. Playback pauses while configuring keys.
+Speed, timing offset, volume, difficulty, autoplay, and fullscreen are saved automatically to `hyperjam.settings` in the current directory and restored on launch. Changes save after a short pause in adjustment, and closing the window saves any final change. The file is excluded from Git. Use `--settings /path/to/profile.settings` for a separate profile, or delete the file to reset preferences. Explicit CLI options override saved values and become the new preferences when the player runs; `--no-autoplay` and `--windowed` disable those saved options. Headless inspection/listing commands do not change preferences. Invalid fields use defaults while valid saved fields still load.
+
+Available note-speed presets are **0.2x, 0.5x, 1.0x, 1.5x, 2.0x, 2.5x, 3.0x, 3.5x, 4.0x, 4.5x, 5.0x, 6.0x, 8.0x, 99.0x**. F1/F2 step through that list, stopping at either end; the minus/plus buttons do the same. Click **Choose preset** to select any multiplier directly. F1/F2 also work in the music picker. CLI `--speed` accepts those presets, for example `--speed 4.5` or `--speed 8`. The first-launch default is 1.0x; subsequent launches restore your last choice. These controls adjust visual scrolling; audio playback and hit timing use the original song rate.
+
+Press **F9** or click **Keys** to remap each lane. Click a lane and press its new key; assigning a key already used by another lane swaps the two lanes. **Save keys** writes the bindings to `hyperjam.keys` in the current directory, and the next launch restores them. **Defaults** restores S D F Space J K L in the editor; **Cancel** discards changes. Playback pauses while configuring keys.
 
 Letters, numbers, modifiers, arrow-left/right, punctuation, and number-pad digits are supported. Menu controls such as Enter, Escape, Tab, function keys, and Up/Down stay reserved. R and O can be assigned to lanes; their retry/open shortcuts are then disabled. F3/F4 remain available. You can also override bindings for one session:
 

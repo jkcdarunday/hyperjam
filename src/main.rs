@@ -4,6 +4,8 @@ use hyperjam::{
     chart::{Song, practice_song},
     gameplay::{Gameplay, Judgment, NoteState},
     library::{self, Library},
+    preferences::{PreferenceStore, Preferences},
+    speed::ScrollSpeed,
 };
 mod menus;
 use macroquad::prelude::*;
@@ -41,6 +43,10 @@ enum Mode {
 }
 
 struct Options {
+    settings_path: PathBuf,
+    saved_preferences: Preferences,
+    preference_warnings: Vec<String>,
+    fullscreen: bool,
     music: PathBuf,
     bindings_path: PathBuf,
     keys: Option<Bindings>,
@@ -51,7 +57,7 @@ struct Options {
     difficulty: usize,
     autoplay: bool,
     offset: f64,
-    speed: f32,
+    speed: ScrollSpeed,
     volume: f32,
     inspect: bool,
     font: Option<PathBuf>,
@@ -63,7 +69,25 @@ struct Options {
     exit_seconds: Option<f64>,
 }
 fn options() -> Result<Options, String> {
+    options_from(std::env::args().skip(1).collect())
+}
+
+fn options_from(arguments: Vec<String>) -> Result<Options, String> {
+    let settings_path = if let Some(index) = arguments.iter().rposition(|arg| arg == "--settings") {
+        PathBuf::from(
+            arguments
+                .get(index + 1)
+                .ok_or("--settings needs a configuration path")?,
+        )
+    } else {
+        PathBuf::from("hyperjam.settings")
+    };
+    let (saved_preferences, preference_warnings) = Preferences::load(&settings_path);
     let mut o = Options {
+        settings_path,
+        saved_preferences,
+        preference_warnings,
+        fullscreen: saved_preferences.fullscreen,
         music: "music".into(),
         bindings_path: "hyperjam.keys".into(),
         keys: None,
@@ -71,11 +95,11 @@ fn options() -> Result<Options, String> {
         validate_music: false,
         chart: None,
         samples: None,
-        difficulty: 1,
-        autoplay: false,
-        offset: 0.0,
-        speed: 1.0,
-        volume: 0.7,
+        difficulty: saved_preferences.difficulty,
+        autoplay: saved_preferences.autoplay,
+        offset: saved_preferences.offset,
+        speed: saved_preferences.speed,
+        volume: saved_preferences.volume,
         inspect: false,
         font: None,
         start: false,
@@ -85,16 +109,22 @@ fn options() -> Result<Options, String> {
         exit_after: None,
         exit_seconds: None,
     };
-    let mut args = std::env::args().skip(1);
+    let mut args = arguments.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
                 println!(
-                    "Hyperjam - native 7-key OJN/OJM gameplay\n\nUsage: hyperjam [chart.ojn] [--samples bank.ojm] [--difficulty easy|normal|hard]\n                [--autoplay] [--start] [--offset milliseconds] [--speed 0.5..3.0]\n                [--volume 0..100] [--inspect] [--font font.ttf]\n                [--music folder] [--keys \"S D F SPACE J K L\"]\n                [--bindings hyperjam.keys] [--list-music] [--validate-music]\n\nWithout a chart, the music picker opens when charts exist in ./music.\nDefaults: S D F Space J K L / Enter start / Esc pause / R retry / O open\n          F1 music / F2 keys / Tab autoplay / Up,Down scroll / +,- offset / F11 fullscreen\nR/O shortcuts are disabled when those letters are assigned to a lane."
+                    "Hyperjam - native 7-key OJN/OJM gameplay\n\nUsage: hyperjam [chart.ojn] [--samples bank.ojm] [--difficulty easy|normal|hard]\n                [--autoplay] [--start] [--offset milliseconds] [--speed preset]\n                [--volume 0..100] [--inspect] [--font font.ttf]\n                [--music folder] [--keys \"S D F SPACE J K L\"]\n                [--bindings hyperjam.keys] [--settings hyperjam.settings]\n                [--fullscreen|--windowed] [--no-autoplay]\n                [--list-music] [--validate-music]\n\nWithout a chart, the music picker opens when charts exist in ./music.\nDefaults: S D F Space J K L / Enter start / Esc pause / R retry / O open\n          F8 music / F9 keys / F1,F2 scroll / Tab autoplay / +,- offset / F11 fullscreen\nR/O shortcuts are disabled when those letters are assigned to a lane."
                 );
                 std::process::exit(0);
             }
             "--samples" => o.samples = Some(args.next().ok_or("--samples needs a path")?.into()),
+            "--settings" => {
+                o.settings_path = args
+                    .next()
+                    .ok_or("--settings needs a configuration path")?
+                    .into()
+            }
             "--music" => o.music = args.next().ok_or("--music needs a folder")?.into(),
             "--bindings" => {
                 o.bindings_path = args
@@ -120,6 +150,9 @@ fn options() -> Result<Options, String> {
                 }
             }
             "--autoplay" => o.autoplay = true,
+            "--no-autoplay" => o.autoplay = false,
+            "--fullscreen" => o.fullscreen = true,
+            "--windowed" => o.fullscreen = false,
             "--offset" => {
                 o.offset = args
                     .next()
@@ -132,14 +165,7 @@ fn options() -> Result<Options, String> {
                 }
             }
             "--speed" => {
-                o.speed = args
-                    .next()
-                    .ok_or("--speed needs a value")?
-                    .parse()
-                    .map_err(|_| "Invalid speed")?;
-                if !(0.5..=3.0).contains(&o.speed) {
-                    return Err("Speed must be between 0.5 and 3.0".into());
-                }
+                o.speed = ScrollSpeed::parse(&args.next().ok_or("--speed needs a value")?)?;
             }
             "--volume" => {
                 o.volume = args
@@ -196,9 +222,12 @@ fn options() -> Result<Options, String> {
 }
 
 struct App {
+    preference_store: PreferenceStore,
+    preferences_error: Option<String>,
     bindings: Bindings,
     bindings_path: PathBuf,
     key_editor: Option<menus::KeyEditor>,
+    speed_menu: bool,
     library: Library,
     library_loader: Option<Receiver<Result<Library, String>>>,
     music: PathBuf,
@@ -213,7 +242,7 @@ struct App {
     difficulty: usize,
     autoplay: bool,
     offset: f64,
-    speed: f32,
+    speed: ScrollSpeed,
     volume: f32,
     warnings: Vec<String>,
     error: Option<String>,
@@ -229,7 +258,10 @@ struct App {
 impl App {
     fn new(o: &Options) -> Self {
         let audio = Audio::open();
-        let mut warnings = vec![];
+        let mut warnings = o.preference_warnings.clone();
+        for warning in &warnings {
+            eprintln!("{warning}");
+        }
         let audio = match audio {
             Ok(a) => {
                 a.volume(o.volume);
@@ -254,9 +286,12 @@ impl App {
             },
         };
         let mut app = Self {
+            preference_store: PreferenceStore::new(o.settings_path.clone(), o.saved_preferences),
+            preferences_error: None,
             bindings,
             bindings_path: o.bindings_path.clone(),
             key_editor: None,
+            speed_menu: false,
             library: Library::default(),
             library_loader: None,
             music: o.music.clone(),
@@ -282,13 +317,37 @@ impl App {
             path_entry: None,
             start_wall: 0.0,
             pause_wall: 0.0,
-            fullscreen: false,
+            fullscreen: o.fullscreen,
         };
         app.scan_music();
         app
     }
+    fn preferences(&self) -> Preferences {
+        Preferences {
+            speed: self.speed,
+            offset: self.offset,
+            volume: self.volume,
+            difficulty: self.difficulty,
+            autoplay: self.autoplay,
+            fullscreen: self.fullscreen,
+        }
+    }
+    fn save_preferences(&mut self) {
+        let current = self.preferences();
+        match self.preference_store.update(current, get_time()) {
+            Ok(true) => self.preferences_error = None,
+            Ok(false) => {}
+            Err(error) => {
+                eprintln!("{error}");
+                self.preferences_error = Some(error);
+            }
+        }
+    }
     fn modal(&self) -> bool {
-        self.path_entry.is_some() || self.key_editor.is_some() || self.library_open
+        self.path_entry.is_some()
+            || self.key_editor.is_some()
+            || self.library_open
+            || self.speed_menu
     }
     fn scan_music(&mut self) {
         let (tx, rx) = mpsc::channel();
@@ -310,6 +369,12 @@ impl App {
             self.pause();
         }
         self.key_editor = Some(menus::KeyEditor::new(self.bindings.clone()));
+    }
+    fn open_speed_menu(&mut self) {
+        if self.mode == Mode::Playing {
+            self.pause();
+        }
+        self.speed_menu = true;
     }
     fn select_library(&mut self) {
         let filtered = self.library.filter(&self.library_query);
@@ -498,6 +563,19 @@ impl App {
             menus::keys_input(self);
             return;
         }
+        if self.speed_menu {
+            while get_char_pressed().is_some() {}
+            if is_key_pressed(KeyCode::F1) || is_key_pressed(KeyCode::Down) {
+                self.speed = self.speed.previous();
+            }
+            if is_key_pressed(KeyCode::F2) || is_key_pressed(KeyCode::Up) {
+                self.speed = self.speed.next();
+            }
+            if is_key_pressed(KeyCode::Escape) || is_key_pressed(KeyCode::Enter) {
+                self.speed_menu = false;
+            }
+            return;
+        }
         if self.library_open {
             menus::library_input(self);
             return;
@@ -536,11 +614,11 @@ impl App {
             self.fullscreen = !self.fullscreen;
             set_fullscreen(self.fullscreen);
         }
-        if is_key_pressed(KeyCode::F1) {
+        if is_key_pressed(KeyCode::F8) {
             self.open_library();
             return;
         }
-        if is_key_pressed(KeyCode::F2) {
+        if is_key_pressed(KeyCode::F9) {
             self.open_keys();
             return;
         }
@@ -572,11 +650,11 @@ impl App {
             self.autoplay = !self.autoplay;
             self.game.autoplay = self.autoplay;
         }
-        if is_key_pressed(KeyCode::Up) {
-            self.speed = (self.speed + 0.1).min(3.0);
+        if is_key_pressed(KeyCode::F2) || is_key_pressed(KeyCode::Up) {
+            self.speed = self.speed.next();
         }
-        if is_key_pressed(KeyCode::Down) {
-            self.speed = (self.speed - 0.1).max(0.5);
+        if is_key_pressed(KeyCode::F1) || is_key_pressed(KeyCode::Down) {
+            self.speed = self.speed.previous();
         }
         if is_key_pressed(KeyCode::Equal) || is_key_pressed(KeyCode::KpAdd) {
             self.offset = (self.offset + 0.010).min(0.5);
@@ -775,10 +853,10 @@ fn draw(app: &mut App, font: &Font, metadata_font: &Font) {
     ui.text("HYPER", 40.0, 52.0, 29.0, INK);
     ui.text("JAM", 133.0, 52.0, 29.0, LIME);
     ui.text("7-KEY RHYTHM PLAYER", 245.0, 49.0, 13.0, MUTED);
-    if ui.button("MUSIC / F1", 790.0, 23.0, 151.0, 39.0, false) && !app.modal() {
+    if ui.button("MUSIC / F8", 790.0, 23.0, 151.0, 39.0, false) && !app.modal() {
         app.open_library();
     }
-    if ui.button("KEYS / F2", 961.0, 23.0, 151.0, 39.0, false) && !app.modal() {
+    if ui.button("KEYS / F9", 961.0, 23.0, 151.0, 39.0, false) && !app.modal() {
         app.open_keys();
     }
     ui.text(
@@ -824,13 +902,15 @@ fn draw(app: &mut App, font: &Font, metadata_font: &Font) {
     }
     ui.line(40.0, 404.0, 318.0, 404.0, 1.0, BORDER);
     ui.text("SCROLL SPEED", 40.0, 439.0, 12.0, MUTED);
-    ui.text(&format!("{:.1}x", app.speed), 258.0, 439.0, 18.0, INK);
-    ui.rect(40.0, 455.0, 278.0, 3.0, BORDER);
-    ui.rect(40.0, 455.0, (app.speed - 0.5) / 2.5 * 278.0, 3.0, LIME);
-    if ui.hover(40.0, 445.0, 278.0, 25.0) && is_mouse_button_down(MouseButton::Left) && !app.modal()
-    {
-        let x = (mouse_position().0 - ui.origin.x) / ui.scale;
-        app.speed = (0.5 + (x - 40.0) / 278.0 * 2.5).clamp(0.5, 3.0);
+    ui.text(&app.speed.label(), 254.0, 439.0, 18.0, INK);
+    if ui.button("-", 40.0, 448.0, 36.0, 27.0, false) && !app.modal() {
+        app.speed = app.speed.previous();
+    }
+    if ui.button("CHOOSE PRESET", 84.0, 448.0, 190.0, 27.0, false) && !app.modal() {
+        app.open_speed_menu();
+    }
+    if ui.button("+", 282.0, 448.0, 36.0, 27.0, false) && !app.modal() {
+        app.speed = app.speed.next();
     }
     ui.text("TIMING OFFSET", 40.0, 493.0, 12.0, MUTED);
     ui.text(
@@ -959,7 +1039,7 @@ fn draw(app: &mut App, font: &Font, metadata_font: &Font) {
     }
     let preview = app.mode == Mode::Ready;
     let view_time = if preview { 2.0 } else { time };
-    let pixels = 300.0 * app.speed as f64;
+    let pixels = 300.0 * app.speed.multiplier() as f64;
     // Notes are drawn directly at framebuffer resolution; no low-resolution render target.
     for (i, note) in app.game.chart.notes.iter().enumerate() {
         if !preview && app.game.states[i] == NoteState::Done {
@@ -1148,7 +1228,7 @@ fn draw(app: &mut App, font: &Font, metadata_font: &Font) {
         MUTED,
     );
     ui.text(
-        "UP / DOWN  SPEED     TAB  AUTOPLAY",
+        "F1 / F2  SPEED     TAB  AUTOPLAY",
         746.0,
         783.0,
         11.0,
@@ -1217,7 +1297,11 @@ fn draw(app: &mut App, font: &Font, metadata_font: &Font) {
             app.ready();
         }
     }
-    if let Some(warning) = app.warnings.first() {
+    if let Some(warning) = app
+        .preferences_error
+        .as_ref()
+        .or_else(|| app.warnings.first())
+    {
         ui.rect(374.0, 87.0, 532.0, 15.0, BG);
         ui.fit(
             warning,
@@ -1372,10 +1456,13 @@ fn main() {
         }
         return;
     }
-    macroquad::Window::from_config(window_conf(), run(o));
+    let mut conf = window_conf();
+    conf.fullscreen = o.fullscreen;
+    macroquad::Window::from_config(conf, run(o));
 }
 
 async fn run(o: Options) {
+    prevent_quit();
     // X11 reports scaled framebuffer dimensions but creates its initial window in pixels.
     // Request logical dimensions once so a 2x desktop gets a 2560x1600 framebuffer.
     if screen_dpi_scale() > 1.0 && screen_width() < 1000.0 {
@@ -1423,6 +1510,7 @@ async fn run(o: Options) {
             }
         }
         draw(&mut app, &font, &metadata_font);
+        app.save_preferences();
         if !captured
             && (if let Some(seconds) = o.screenshot_seconds {
                 get_time() - wall_start >= seconds
@@ -1435,7 +1523,8 @@ async fn run(o: Options) {
             captured = true;
         }
         frame += 1;
-        if o.exit_after.is_some_and(|end| frame >= end)
+        if is_quit_requested()
+            || o.exit_after.is_some_and(|end| frame >= end)
             || o.exit_seconds
                 .is_some_and(|end| get_time() - wall_start >= end)
         {
@@ -1449,5 +1538,73 @@ async fn run(o: Options) {
             break;
         }
         next_frame().await;
+    }
+    let current = app.preferences();
+    if let Err(error) = app.preference_store.flush(current) {
+        eprintln!("{error}");
+    }
+}
+
+#[cfg(test)]
+mod preference_tests {
+    use super::*;
+    fn saved(name: &str) -> (PathBuf, Preferences) {
+        let path = std::env::temp_dir().join(format!(
+            "hyperjam-options-{}-{name}.settings",
+            std::process::id()
+        ));
+        let prefs = Preferences {
+            speed: ScrollSpeed::parse("6").unwrap(),
+            offset: 0.045,
+            volume: 0.4,
+            difficulty: 2,
+            autoplay: true,
+            fullscreen: true,
+        };
+        prefs.save(&path).unwrap();
+        (path, prefs)
+    }
+    #[test]
+    fn launch_restores_all_gameplay_preferences() {
+        let (path, prefs) = saved("restore");
+        let options = options_from(vec![
+            "--settings".into(),
+            path.to_string_lossy().into_owned(),
+        ])
+        .unwrap();
+        assert_eq!(options.speed, prefs.speed);
+        assert_eq!(options.offset, prefs.offset);
+        assert_eq!(options.volume, prefs.volume);
+        assert_eq!(options.difficulty, prefs.difficulty);
+        assert!(options.autoplay);
+        assert!(options.fullscreen);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn cli_overrides_saved_values_even_when_profile_flag_comes_last() {
+        let (path, prefs) = saved("override");
+        let args = [
+            "--speed",
+            "4.5",
+            "--offset",
+            "-25",
+            "--volume",
+            "80",
+            "--difficulty",
+            "easy",
+            "--no-autoplay",
+            "--windowed",
+            "--settings",
+            path.to_str().unwrap(),
+        ];
+        let options = options_from(args.into_iter().map(str::to_owned).collect()).unwrap();
+        assert_eq!(options.speed.multiplier(), 4.5);
+        assert_eq!(options.offset, -0.025);
+        assert_eq!(options.volume, 0.8);
+        assert_eq!(options.difficulty, 0);
+        assert!(!options.autoplay);
+        assert!(!options.fullscreen);
+        assert_eq!(Preferences::load(&path).0, prefs); // Parsing alone never writes a file.
+        std::fs::remove_file(path).unwrap();
     }
 }

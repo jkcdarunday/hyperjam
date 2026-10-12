@@ -4,4 +4,6 @@ pub mod chart;
 pub mod gameplay;
 pub mod library;
 pub mod ojm;
+pub mod preferences;
 mod reader;
+pub mod speed;

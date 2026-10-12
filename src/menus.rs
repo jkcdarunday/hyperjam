@@ -73,13 +73,19 @@ pub fn keys_input(app: &mut App) {
 }
 
 pub fn library_input(app: &mut App) {
-    if is_key_pressed(KeyCode::Escape) || is_key_pressed(KeyCode::F1) {
+    if is_key_pressed(KeyCode::Escape) || is_key_pressed(KeyCode::F8) {
         app.library_open = false;
         return;
     }
-    if is_key_pressed(KeyCode::F2) {
+    if is_key_pressed(KeyCode::F9) {
         app.open_keys();
         return;
+    }
+    if is_key_pressed(KeyCode::F1) {
+        app.speed = app.speed.previous();
+    }
+    if is_key_pressed(KeyCode::F2) {
+        app.speed = app.speed.next();
     }
     if is_key_pressed(KeyCode::F5) {
         app.scan_music();
@@ -129,6 +135,47 @@ pub fn draw(app: &mut App, ui: &Ui, meta: &Ui) {
     }
     if app.key_editor.is_some() {
         draw_keys(app, ui);
+    }
+    if app.speed_menu {
+        draw_speeds(app, ui);
+    }
+}
+
+fn draw_speeds(app: &mut App, ui: &Ui) {
+    use hyperjam::speed::{PRESETS, ScrollSpeed};
+    ui.rect(0.0, 0.0, 1280.0, 800.0, Color::new(0.0, 0.0, 0.0, 0.82));
+    ui.rect(330.0, 233.0, 620.0, 334.0, PANEL);
+    ui.text("NOTE SPEED", 360.0, 278.0, 27.0, INK);
+    ui.text(
+        "Speed presets / F1 decrease / F2 increase",
+        360.0,
+        310.0,
+        15.0,
+        MUTED,
+    );
+    for index in 0..PRESETS.len() {
+        let speed = ScrollSpeed::from_index(index);
+        if ui.button(
+            &speed.label(),
+            360.0 + (index % 4) as f32 * 145.0,
+            334.0 + (index / 4) as f32 * 45.0,
+            125.0,
+            35.0,
+            speed == app.speed,
+        ) {
+            app.speed = speed;
+            app.speed_menu = false;
+        }
+    }
+    ui.text(
+        "Changes note scrolling. The song and hit timing stay at their original rate.",
+        360.0,
+        540.0,
+        12.0,
+        MUTED,
+    );
+    if ui.button("CLOSE", 795.0, 495.0, 125.0, 29.0, false) {
+        app.speed_menu = false;
     }
 }
 
@@ -279,7 +326,7 @@ fn draw_library(app: &mut App, ui: &Ui, meta: &Ui) {
         close = true;
     }
     ui.text(
-        "UP/DOWN / WHEEL    ENTER LOAD    F2 KEYS",
+        "UP/DOWN / WHEEL    ENTER LOAD    F9 KEYS",
         380.0,
         686.0,
         12.0,

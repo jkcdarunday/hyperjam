@@ -2,6 +2,8 @@
 /music/
 /hyperjam.keys
 /hyperjam.keys.tmp
+/hyperjam.settings
+/hyperjam.settings.tmp
 *.ojn
 *.ojm
 *.omc
